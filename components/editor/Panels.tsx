@@ -32,7 +32,7 @@ export default function Panels() {
     }
 
     return (
-        <div className="flex-1 overflow-y-auto overflow-x-hidden flex flex-col bg-kiln-black relative scrollbar-thin scrollbar-thumb-ash scrollbar-track-transparent p-4">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden flex flex-col bg-kiln-black relative scrollbar-thin scrollbar-thumb-ash scrollbar-track-transparent p-4 pt-20">
             {/* Pro Upgrade Trigger (Hidden if pro) */}
             {!isPro && (
                 <div className="fixed bottom-6 right-6 z-50">

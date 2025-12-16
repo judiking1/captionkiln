@@ -25,7 +25,7 @@ export default function VideoPlayer({ video, className, autoPlay = false, isPro 
     const containerRef = useRef<HTMLDivElement>(null);
 
     // Export Hook
-    const { exportVideo, isExporting, progress, error: exportError } = useVideoExporter();
+    const { exportVideo, isExporting, progress, error: exportError } = useVideoExporter({ videoRef });
 
     // Playback State
     const [isPlaying, setIsPlaying] = useState(false);
@@ -175,13 +175,10 @@ export default function VideoPlayer({ video, className, autoPlay = false, isPro 
         if (!video.src) return;
 
         await exportVideo({
-            videoSrc: video.src,
             script: video.script,
             quality,
             isPro: isExportPro, // Use the passed flag, usually matching isPro/ExportType
-            onProgress: (p) => {
-                // Progress handled by hook state
-            }
+            title: 'captionkiln_export'
         });
     };
 

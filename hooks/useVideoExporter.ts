@@ -1,128 +1,331 @@
-import { useState, useRef } from 'react';
-import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile, toBlobURL } from '@ffmpeg/util';
-import { ScriptLine } from '@/store/projectStore';
-import { generateSRT, generateVTT } from '@/lib/subtitleUtils';
+import { useState, useRef, useEffect } from 'react';
+import type { ScriptLine } from '@/store/projectStore';
 
-export type ExportQuality = '1080p' | '4k' | '720p';
+interface UseVideoExporterProps {
+    videoRef: React.RefObject<HTMLVideoElement | null>;
+}
+
+export type ExportQuality = '720p' | '1080p' | '4k';
 
 interface ExportOptions {
-    videoSrc: string;
     script: ScriptLine[];
     quality: ExportQuality;
     isPro: boolean;
-    onProgress?: (progress: number) => void;
+    title?: string;
 }
 
-export function useVideoExporter() {
+export function useVideoExporter({ videoRef }: UseVideoExporterProps) {
     const [isExporting, setIsExporting] = useState(false);
     const [progress, setProgress] = useState(0);
     const [error, setError] = useState<string | null>(null);
-    const ffmpegRef = useRef(new FFmpeg());
 
-    const loadFFmpeg = async () => {
-        const ffmpeg = ffmpegRef.current;
-        const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-        // Check if already loaded
-        if (!ffmpeg.loaded) {
-            await ffmpeg.load({
-                coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-                wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-            });
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    const isExportingRef = useRef(false);
+    const cancelledRef = useRef(false);
+
+    // Audio Context Management
+    const audioContextRef = useRef<AudioContext | null>(null);
+    const sourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
+    const destinationNodeRef = useRef<MediaStreamAudioDestinationNode | null>(null);
+
+    // Cleanup function to close audio context when component unmounts
+    useEffect(() => {
+        return () => {
+            if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+                audioContextRef.current.close();
+            }
+        };
+    }, []);
+
+    const cancelExport = () => {
+        cancelledRef.current = true;
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+            mediaRecorderRef.current.stop();
         }
-        return ffmpeg;
+        isExportingRef.current = false;
+        setIsExporting(false);
+        setProgress(0);
+
+        const video = videoRef.current;
+        if (video) {
+            video.pause();
+            video.muted = false;
+
+            if (audioContextRef.current && sourceNodeRef.current) {
+                try {
+                    // Reconnect to speakers (destination)
+                    sourceNodeRef.current.connect(audioContextRef.current.destination);
+                } catch (e) {
+                    console.warn("Could not reconnect to speakers", e);
+                }
+            }
+        }
     };
 
-    const exportVideo = async ({ videoSrc, script, quality, isPro, onProgress }: ExportOptions) => {
+    const exportVideo = async ({ script, quality = '720p', isPro, title = 'video' }: ExportOptions) => {
+        const video = videoRef.current;
+        if (!video) {
+            setError("Video element not found");
+            return;
+        }
+
         setIsExporting(true);
+        isExportingRef.current = true;
+        cancelledRef.current = false;
         setProgress(0);
         setError(null);
 
+        const originalTime = video.currentTime;
+        const originalVolume = video.volume;
+        const originalMuted = video.muted;
+        const wasPlaying = !video.paused;
+
+        // Resolution settings
+        let width = 1280;
+        let height = 720;
+        if (quality === '1080p') {
+            width = 1920;
+            height = 1080;
+        } else if (quality === '4k') {
+            width = 3840;
+            height = 2160;
+        }
+
+        const canvas = document.createElement('canvas');
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const ctx = canvas.getContext('2d') as any;
+        if (!ctx) {
+            setError("Could not create canvas context");
+            setIsExporting(false);
+            return;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+
+        const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+            ? 'video/webm;codecs=vp9'
+            : 'video/webm';
+
+        // --- Audio Setup ---
         try {
-            const ffmpeg = await loadFFmpeg();
+            if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+                audioContextRef.current = new AudioContextClass();
+            }
+            const audioCtx = audioContextRef.current;
 
-            ffmpeg.on('log', ({ message }) => {
-                console.log('[FFmpeg Log]:', message);
-            });
-
-            ffmpeg.on('progress', ({ progress, time }) => {
-                const p = Math.round(progress * 100);
-                setProgress(p);
-                onProgress?.(p);
-            });
-
-            // 1. Download Video
-            console.log('fetching video...');
-            const videoData = await fetchFile(videoSrc);
-            await ffmpeg.writeFile('input.mp4', videoData);
-
-            // 2. Generate Subtitle File (SRT)
-            const srtContent = generateSRT(script);
-            // Write to explicit root path
-            await ffmpeg.writeFile('/subtitles.srt', srtContent);
-
-            // 3. Load Font
-            console.log('Fetching font...');
-            const fontUrl = 'https://raw.githubusercontent.com/google/fonts/main/ofl/inter/Inter-Bold.ttf';
-            const fontData = await fetchFile(fontUrl);
-            await ffmpeg.writeFile('/Inter-Bold.ttf', fontData);
-
-            // 4. Construct Filters
-            // FINAL FIX ATTEMPT:
-            // 1. Use absolute paths in the filter string.
-            // 2. Removing 'fontsdir=/' to rely on explicit fontfile path in style if needed, 
-            //    or just let it fail back to defaults (the error was opening the SRT, not the font).
-            // 3. Quote the filename: subtitles='/subtitles.srt'
-
-            // Note: force_style is removed to ensure basic functionality first.
-            const subtitleFilter = "subtitles='/subtitles.srt'";
-
-            let filterComplex = subtitleFilter;
-
-            // Watermark (Free Plan)
-            if (!isPro) {
-                const watermarkText = 'CaptionKiln Free';
-                const drawText = `drawtext=fontfile='/Inter-Bold.ttf':text='${watermarkText}':fontcolor=white@0.5:fontsize=24:x=w-tw-20:y=h-th-20`;
-                filterComplex += `,${drawText}`;
+            // Create MediaElementSource only once per video element
+            if (!sourceNodeRef.current) {
+                try {
+                    // Cross-origin issues might prevent this if CORS isn't set on video
+                    sourceNodeRef.current = audioCtx.createMediaElementSource(video);
+                } catch (e) {
+                    console.warn("MediaElementSource already exists or failed", e);
+                }
             }
 
-            console.log('Running FFmpeg with filter:', filterComplex);
+            // Create a new destination for this export session
+            const dest = audioCtx.createMediaStreamDestination();
+            destinationNodeRef.current = dest;
 
-            // Run FFmpeg
-            const ret = await ffmpeg.exec([
-                '-i', 'input.mp4',
-                '-vf', filterComplex,
-                '-c:a', 'copy',
-                '-c:v', 'libx264',
-                '-preset', 'ultrafast',
-                'output.mp4'
-            ]);
+            if (sourceNodeRef.current) {
+                // Disconnect from speakers (destination) if connected
+                try {
+                    sourceNodeRef.current.disconnect(audioCtx.destination);
+                } catch { /* ignore */ }
 
-            console.log('FFmpeg exit code:', ret);
-            if (ret !== 0) {
-                throw new Error('FFmpeg processing failed (Exit Code != 0). Check Console.');
+                // Connect to stream destination
+                sourceNodeRef.current.connect(dest);
             }
 
-            // 5. Read Output
-            console.log('Reading output...');
-            const data = await ffmpeg.readFile('output.mp4');
+            const audioTrack = dest.stream.getAudioTracks()[0];
+            // -------------------
 
-            // 6. Create Blob & Download
-            const uint8Array = data as Uint8Array;
-            const buffer = uint8Array.buffer as ArrayBuffer;
-            const blob = new Blob([buffer], { type: 'video/mp4' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `captionkiln_export_${isPro ? 'pro' : 'free'}_${Date.now()}.mp4`;
-            a.click();
-            URL.revokeObjectURL(url);
-            console.log('Export complete.');
+            const stream = canvas.captureStream(30);
+            if (audioTrack) {
+                stream.addTrack(audioTrack);
+            }
 
+            const mediaRecorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: quality === '4k' ? 8000000 : 2500000 });
+            mediaRecorderRef.current = mediaRecorder;
+
+            const chunks: Blob[] = [];
+
+            mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) chunks.push(e.data);
+            };
+
+            mediaRecorder.onstop = () => {
+                if (cancelledRef.current) {
+                    cleanup();
+                    return;
+                }
+
+                const blob = new Blob(chunks, { type: 'video/webm' });
+                if (blob.size > 0) {
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+
+                    // Format filename: Title_Quality_Date.webm
+                    const safeTitle = title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+                    const dateStr = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+                    a.download = `${safeTitle}_${quality}_${isPro ? 'pro' : 'free'}_${dateStr}.webm`;
+
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                } else {
+                    setError("Export failed: Empty output file");
+                }
+
+                cleanup();
+            };
+
+            const cleanup = () => {
+                setIsExporting(false);
+                setProgress(0);
+                isExportingRef.current = false;
+
+                // Restore video state
+                video.currentTime = originalTime;
+                video.volume = originalVolume;
+                video.muted = originalMuted;
+
+                // Reconnect audio to speakers
+                if (audioContextRef.current && sourceNodeRef.current) {
+                    try {
+                        // Disconnect from recording destination
+                        if (destinationNodeRef.current) {
+                            sourceNodeRef.current.disconnect(destinationNodeRef.current);
+                        }
+                        // Connect back to speakers
+                        sourceNodeRef.current.connect(audioContextRef.current.destination);
+                    } catch (e) {
+                        console.warn("Audio routing cleanup failed", e);
+                    }
+                }
+
+                if (wasPlaying) {
+                    video.play().catch(() => { });
+                }
+            };
+
+            video.pause();
+            video.currentTime = 0;
+            video.muted = false;
+
+            // Wait for seek
+            await new Promise<void>((resolve) => {
+                const handleSeeked = () => {
+                    video.removeEventListener('seeked', handleSeeked);
+                    resolve();
+                };
+                video.addEventListener('seeked', handleSeeked);
+                if (video.currentTime === 0) {
+                    video.removeEventListener('seeked', handleSeeked);
+                    setTimeout(resolve, 50);
+                } else {
+                    setTimeout(() => {
+                        video.removeEventListener('seeked', handleSeeked);
+                        resolve();
+                    }, 1000);
+                }
+            });
+
+            mediaRecorder.start();
+
+            try {
+                await video.play();
+            } catch (e) {
+                console.error("Export playback failed", e);
+                setError("Could not start video playback for export");
+                cancelExport();
+                return;
+            }
+
+            const drawFrame = () => {
+                if (!isExportingRef.current) return;
+
+                if (video.ended || (video.duration > 0 && video.currentTime >= video.duration - 0.1)) {
+                    mediaRecorder.stop();
+                    return;
+                }
+
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                // Watermark (Only for Free)
+                if (!isPro) {
+                    ctx.font = 'bold 24px sans-serif';
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+                    ctx.textAlign = 'right';
+                    ctx.fillText('CaptionKiln Free', canvas.width - 20, 40);
+                }
+
+                // Subtitles
+                const currentTime = video.currentTime;
+                // find active line
+                const currentLine = script.find(
+                    (line) => currentTime >= line.startTime && currentTime < line.endTime
+                );
+
+                if (currentLine) {
+                    const fontSize = quality === '4k' ? 72 : quality === '1080p' ? 48 : 24;
+                    ctx.font = `${fontSize}px sans-serif`;
+                    ctx.fillStyle = 'white';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'bottom';
+
+                    const maxWidth = canvas.width * 0.9;
+                    const words = currentLine.text.split(' ');
+                    let line = '';
+                    const lines = [];
+
+                    for (let n = 0; n < words.length; n++) {
+                        const testLine = line + words[n] + ' ';
+                        const metrics = ctx.measureText(testLine);
+                        const testWidth = metrics.width;
+                        if (testWidth > maxWidth && n > 0) {
+                            lines.push(line);
+                            line = words[n] + ' ';
+                        } else {
+                            line = testLine;
+                        }
+                    }
+                    lines.push(line);
+
+                    const lineHeight = fontSize * 1.2;
+                    const startY = canvas.height - (fontSize * 1.5) - (lines.length - 1) * lineHeight;
+
+                    ctx.shadowColor = 'black';
+                    ctx.shadowBlur = 4;
+                    ctx.lineWidth = fontSize / 6;
+                    ctx.strokeStyle = 'black';
+
+                    lines.forEach((l, i) => {
+                        const y = startY + (i * lineHeight);
+                        ctx.strokeText(l, canvas.width / 2, y);
+                        ctx.shadowBlur = 0;
+                        ctx.fillText(l, canvas.width / 2, y);
+                        ctx.shadowBlur = 4;
+                    });
+                }
+
+                if (video.duration > 0) {
+                    const prog = (video.currentTime / video.duration) * 100;
+                    setProgress(isNaN(prog) ? 0 : Math.min(prog, 100));
+                }
+
+                requestAnimationFrame(drawFrame);
+            };
+
+            drawFrame();
         } catch (err: any) {
             console.error("Export Error:", err);
-            setError(err.message || "Export failed.");
-        } finally {
+            setError(err.message || "Unknown export error");
             setIsExporting(false);
         }
     };
@@ -131,6 +334,7 @@ export function useVideoExporter() {
         exportVideo,
         isExporting,
         progress,
-        error
+        error,
+        cancelExport
     };
 }
