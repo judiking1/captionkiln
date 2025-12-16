@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+@theme {
+  --color-kiln-black: #0B0F14;
+  --color-ash: #1F2937;
+  --color-ash-light: #374151;
+  --color-ember: #FF6A2A;
+  --color-ember-glow: #FFB38A;
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Base Styles */
+body {
+  background-color: var(--color-kiln-black);
+  color: white;
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+}
+
+/* Utilities */
+@utility text-balance {
+  text-wrap: balance;
+}

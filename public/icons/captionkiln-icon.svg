@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="256" y1="0" x2="256" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#191C21"/>
+      <stop offset="1" stop-color="#11141A"/>
+    </linearGradient>
+
+    <radialGradient id="hl" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse"
+      gradientTransform="translate(150 120) rotate(50) scale(420 420)">
+      <stop offset="0" stop-color="white" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="white" stop-opacity="0"/>
+    </radialGradient>
+
+    <filter id="softShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+
+    <filter id="emberGlow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="14" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <linearGradient id="emberHi" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFB884" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#FFB884" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="512" height="512" rx="120" fill="url(#bg)"/>
+  <rect x="0" y="0" width="512" height="512" rx="120" fill="url(#hl)"/>
+  <rect x="2" y="2" width="508" height="508" rx="118" stroke="rgba(255,255,255,0.08)" stroke-width="2"/>
+
+  <g filter="url(#softShadow)">
+    <!-- top bar -->
+    <rect x="96" y="196" width="320" height="38" rx="19" fill="#4E5258"/>
+    <!-- mid bar -->
+    <rect x="138" y="254" width="236" height="38" rx="19" fill="#5C6067"/>
+    <rect x="150" y="276" width="212" height="18" rx="9" fill="#FF6A2A" opacity="0.55" filter="url(#emberGlow)"/>
+    <!-- bottom bar glow -->
+    <rect x="160" y="326" width="192" height="38" rx="19" fill="#FF6A2A" filter="url(#emberGlow)"/>
+    <!-- bottom bar highlight -->
+    <rect x="182" y="334" width="148" height="14" rx="7" fill="url(#emberHi)" opacity="0.95"/>
+  </g>
+</svg>
