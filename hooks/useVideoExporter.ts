@@ -251,6 +251,7 @@ export function useVideoExporter({ videoRef }: UseVideoExporterProps) {
                 if (!isExportingRef.current) return;
 
                 if (video.ended || (video.duration > 0 && video.currentTime >= video.duration - 0.1)) {
+                    console.log("Export finished naturally");
                     mediaRecorder.stop();
                     return;
                 }
@@ -315,13 +316,25 @@ export function useVideoExporter({ videoRef }: UseVideoExporterProps) {
                 }
 
                 if (video.duration > 0) {
-                    const prog = (video.currentTime / video.duration) * 100;
-                    setProgress(isNaN(prog) ? 0 : Math.min(prog, 100));
+                    const rawProg = (video.currentTime / video.duration) * 100;
+                    const prog = isNaN(rawProg) ? 0 : Math.min(rawProg, 100);
+
+                    // Throttle updates to avoid state churn
+                    setProgress((prev) => {
+                        if (Math.floor(prog) > Math.floor(prev)) {
+                            console.log(`Export Progress: ${Math.floor(prog)}%`);
+                            return prog;
+                        }
+                        return prev;
+                    });
+                } else {
+                    console.log("Video duration invalid:", video.duration);
                 }
 
                 requestAnimationFrame(drawFrame);
             };
 
+            console.log("Starting export loop");
             drawFrame();
         } catch (err: any) {
             console.error("Export Error:", err);
