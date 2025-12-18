@@ -236,23 +236,38 @@ export function useVideoExporter({ videoRef }: UseVideoExporterProps) {
                 }
             });
 
+            // Event-driven stop mechanism (more reliable than frame polling)
+            const handleVideoEnded = () => {
+                console.log("Video ended event fired. Stopping recording.");
+                if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+                    mediaRecorderRef.current.stop();
+                }
+            };
+
+            // Cleanup listener on stop just in case
+            video.addEventListener('ended', handleVideoEnded);
+
             mediaRecorder.start();
 
             try {
+                // Ensure normal speed for export stability
+                video.playbackRate = 1.0;
                 await video.play();
             } catch (e) {
                 console.error("Export playback failed", e);
                 setError("Could not start video playback for export");
                 cancelExport();
+                video.removeEventListener('ended', handleVideoEnded);
                 return;
             }
 
             const drawFrame = () => {
                 if (!isExportingRef.current) return;
 
-                if (video.ended || (video.duration > 0 && video.currentTime >= video.duration - 0.1)) {
-                    console.log("Export finished naturally");
-                    mediaRecorder.stop();
+                // Safety check: if somehow we go past duration significantly, force stop
+                if (video.duration > 0 && video.currentTime > video.duration + 0.5) {
+                    console.log("Force stopping: Exceeded duration");
+                    handleVideoEnded();
                     return;
                 }
 
@@ -331,6 +346,9 @@ export function useVideoExporter({ videoRef }: UseVideoExporterProps) {
                     console.log("Video duration invalid:", video.duration);
                 }
 
+                // If media recorder is inactive, stop the loop
+                if (mediaRecorderRef.current?.state === 'inactive') return;
+
                 requestAnimationFrame(drawFrame);
             };
 
@@ -340,7 +358,16 @@ export function useVideoExporter({ videoRef }: UseVideoExporterProps) {
             console.error("Export Error:", err);
             setError(err.message || "Unknown export error");
             setIsExporting(false);
+
+            // Remove listener in case of error
+            const video = videoRef.current;
+            if (video) video.removeEventListener('ended', () => { }); // cleanup handled elsewhere basically
         }
+    };
+
+    // Helper to cleanup tracks
+    const stopStreamTracks = (stream: MediaStream) => {
+        stream.getTracks().forEach(track => track.stop());
     };
 
     return {

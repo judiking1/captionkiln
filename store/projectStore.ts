@@ -46,7 +46,13 @@ export const useProjectStore = create<ProjectState>((set) => ({
     },
 
     removeVideo: (id) => {
-        set((state) => ({ videos: state.videos.filter((v) => v.id !== id) }));
+        set((state) => {
+            const videoRemove = state.videos.find(v => v.id === id);
+            if (videoRemove) {
+                URL.revokeObjectURL(videoRemove.src);
+            }
+            return { videos: state.videos.filter((v) => v.id !== id) };
+        });
     },
 
     updateScript: (videoId, script) => {
