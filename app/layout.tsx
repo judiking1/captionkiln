@@ -3,6 +3,7 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
+import { CSPostHogProvider } from "./providers";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -35,9 +36,11 @@ export default function RootLayout({
       <body
         className={`${inter.variable} ${jetbrainsMono.variable} antialiased bg-kiln-black text-white`}
       >
-        <Header />
-        {children}
-        <Footer />
+        <CSPostHogProvider>
+          <Header />
+          {children}
+          <Footer />
+        </CSPostHogProvider>
       </body>
     </html>
   );
